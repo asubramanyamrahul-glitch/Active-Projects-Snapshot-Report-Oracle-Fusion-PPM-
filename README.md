@@ -1,125 +1,300 @@
 # Active Projects Snapshot Report (Oracle Fusion PPM)
 
-## Overview
+## 1. Purpose of this Report
 
-This repository contains a SQL-based report designed to provide a clean and practical snapshot of active projects within Oracle Fusion PPM.
+This report is designed to give a **clear and consolidated view of active projects** in Oracle Fusion PPM.
 
-The goal is simple: bring together the most important project details into a single, easy-to-consume dataset that can be used for reporting, dashboards, or downstream processing.
+From a business perspective, it answers questions like:
 
-Instead of pulling scattered data from multiple places, this query centralizes everything into one view — making it much easier for PMO teams, analysts, and finance users to understand what’s going on across projects.
+* What projects currently exist in the system?
+* What is their current status?
+* Who is responsible for each project?
+* Which Business Unit owns the project?
+* What are the project timelines?
 
----
+From a technical perspective, the query brings together **core project data + descriptive attributes** (status name, BU name, Project Manager) into a **single, report-ready dataset**.
 
-## What This Report Covers
+This type of report is commonly used in:
 
-The report focuses on active and in-progress projects and includes:
-
-* Project identifiers (ID, Number, Name)
-* Current project status (user-friendly, not codes)
-* Start and completion dates
-* Assigned Project Manager
-* Business Unit context
-
-Think of it as a “current state of projects” snapshot — useful for both operational tracking and reporting.
-
----
-
-## Data Sources Used
-
-The query pulls data from a few key Oracle Fusion tables/views:
-
-* **Projects View** – Main source of project data
-* **Project Status Translation Table** – Converts status codes into readable names
-* **Business Unit View** – Provides BU names
-* **Project Parties + Roles + Person Names** – Used to identify and display the Project Manager
-
-Each additional join exists purely to enrich the base project data with something more meaningful for end users.
+* PMO dashboards
+* Management reporting
+* BI Publisher (BIP) outputs
+* APEX reporting screens
+* Data extracts for integrations
 
 ---
 
-## Key Logic Explained
+## 2. Tables and Views Used
 
-### 1. Base Dataset
+### 2.1 `PJF_PROJECTS_ALL_VL` (Alias: `p`) — Main Driver
 
-The report starts with the main projects view, which already includes most of the core attributes like project number, name, dates, and status code.
+This is the **primary source table/view** for the report.
 
-### 2. Status Translation
+#### Why it is used:
 
-Project status is stored as a code, so it’s joined with a translation table to show a readable name instead.
+* Contains all core project information
+* Secured view (respects user access)
+* Acts as the base dataset
 
-### 3. Business Unit Mapping
+#### Key Columns Used:
 
-Projects are linked to an organization. This is mapped to a Business Unit name for reporting clarity.
-
-### 4. Project Manager Identification
-
-The Project Manager is derived by:
-
-* Looking at project party assignments
-* Filtering for the “Project Manager” role
-* Pulling the person’s full name from the HR tables (with date-effective logic)
-
-### 5. Filtering
-
-The query intentionally limits results to:
-
-* Non-template projects
-* Projects in relevant lifecycle stages (Draft, Approved, Active)
-
-### 6. Ordering
-
-Results are sorted by project number to keep things predictable and easy to scan.
+* `PROJECT_ID` → Unique system identifier
+* `SEGMENT1` → Project Number (business identifier)
+* `NAME` → Project Name
+* `PROJECT_STATUS_CODE` → Status (code form)
+* `START_DATE` → Project start date
+* `COMPLETION_DATE` → Project finish date
+* `ORG_ID` → Business Unit reference
+* `TEMPLATE_FLAG` → Identifies templates vs actual projects
 
 ---
 
-## Output Structure
+### 2.2 `PJF_PROJECT_STATUSES_TL` (Alias: `st`) — Status Translation
 
-Each row in the result represents a project and includes:
+#### Why it is used:
+
+Projects store only a **status code**, but users need a **readable status name**.
+
+#### Key Columns Used:
+
+* `PROJECT_STATUS_CODE` → Join key
+* `PROJECT_STATUS_NAME` → Display value
+* `LANGUAGE` → Ensures correct language translation
+
+---
+
+### 2.3 `FUN_ALL_BUSINESS_UNITS_V` (Alias: `bu`) — Business Unit
+
+#### Why it is used:
+
+To convert the organization ID into a **Business Unit name**.
+
+#### Key Columns Used:
+
+* `BU_ID` → Join key (mapped to `p.ORG_ID`)
+* `BU_NAME` → Business Unit name
+
+---
+
+### 2.4 Project Manager Subquery (Alias: `pm`)
+
+This is a derived dataset built using three tables:
+
+---
+
+#### a) `PJF_PROJECT_PARTIES` (Alias: `ppp`)
+
+##### Why:
+
+Stores **project team members and their roles**.
+
+##### Key Columns:
 
 * `PROJECT_ID`
-* `PROJECT_NUMBER`
-* `PROJECT_NAME`
-* `PROJECT_STATUS`
-* `START_DATE`
-* `FINISH_DATE`
-* `PROJECT_MANAGER`
-* `BUSINESS_UNIT`
+* `PROJECT_ROLE_ID`
+* `RESOURCE_SOURCE_ID` (links to person)
 
 ---
 
-## Usage
+#### b) `PJF_PROJ_ROLE_TYPES_TL` (Alias: `prt`)
 
-This query is flexible and can be used in different ways:
+##### Why:
 
-* As a BI Publisher (BIP) data source
-* For APEX-based dashboards or reports
-* As a staging dataset for ETL or integrations
-* For ad-hoc analysis by functional teams
+Used to identify the **role name** (e.g., "Project Manager").
 
----
+##### Key Columns:
 
-## Notes & Considerations
-
-* Some projects may not have a Project Manager assigned — those fields will appear as null.
-* If multiple Project Managers exist, the current logic may return more than one row per project (this can be refined if needed).
-* Status codes and role names can vary slightly depending on your Fusion setup.
+* `PROJECT_ROLE_ID`
+* `PROJECT_ROLE_NAME`
+* `LANGUAGE`
 
 ---
 
-## Possible Enhancements
+#### c) `PER_PERSON_NAMES_F` (Alias: `ppnf`)
 
-If you plan to extend this:
+##### Why:
 
-* Add financial metrics (cost, budget, revenue)
-* Include project classification or type
-* Filter by Business Unit dynamically
-* Add “primary” Project Manager logic if multiple exist
-* Include project health/status indicators
+Provides the **actual name of the person**.
+
+##### Key Columns:
+
+* `PERSON_ID`
+* `FULL_NAME`
+* `NAME_TYPE`
+* `EFFECTIVE_START_DATE`
+* `EFFECTIVE_END_DATE`
+
+##### Special Logic:
+
+* Filters for `NAME_TYPE = 'GLOBAL'`
+* Applies effective date check using `SYSDATE`
 
 ---
 
-## Final Thoughts
+## 3. Columns Selected in Final Output
 
-This isn’t meant to be overly complex — just something reliable and practical that solves a common reporting need.
+| Column            | Source                   | Description                      |
+| ----------------- | ------------------------ | -------------------------------- |
+| `PROJECT_ID`      | `p.PROJECT_ID`           | Unique system identifier         |
+| `PROJECT_NUMBER`  | `p.SEGMENT1`             | Business-friendly project number |
+| `PROJECT_NAME`    | `p.NAME`                 | Name of the project              |
+| `PROJECT_STATUS`  | `st.PROJECT_STATUS_NAME` | Readable status                  |
+| `START_DATE`      | `p.START_DATE`           | Project start date               |
+| `FINISH_DATE`     | `p.COMPLETION_DATE`      | Project completion date          |
+| `PROJECT_MANAGER` | `pm.FULL_NAME`           | Assigned Project Manager         |
+| `BUSINESS_UNIT`   | `bu.BU_NAME`             | Owning Business Unit             |
 
-If you’re working in Oracle Fusion PPM, you’ll probably end up building something like this anyway. This just gives you a solid starting point.
+---
+
+## 4. Join Logic Explained
+
+### 4.1 Status Join
+
+```sql
+LEFT JOIN PJF_PROJECT_STATUSES_TL st
+  ON st.PROJECT_STATUS_CODE = p.PROJECT_STATUS_CODE
+ AND st.LANGUAGE = USERENV('LANG')
+```
+
+#### Why:
+
+* Converts status code → readable name
+* Uses session language for translation
+
+#### Why LEFT JOIN:
+
+* Ensures project is not dropped if translation is missing
+
+---
+
+### 4.2 Business Unit Join
+
+```sql
+LEFT JOIN FUN_ALL_BUSINESS_UNITS_V bu
+  ON bu.BU_ID = p.ORG_ID
+```
+
+#### Why:
+
+* Maps organization ID to BU name
+
+#### Why LEFT JOIN:
+
+* Keeps project even if BU mapping is unavailable
+
+---
+
+### 4.3 Project Manager Join
+
+```sql
+LEFT JOIN (subquery) pm
+  ON pm.PROJECT_ID = p.PROJECT_ID
+```
+
+#### Why:
+
+* Extracts only the resource with role = "Project Manager"
+* Converts person ID → Full Name
+
+#### Why LEFT JOIN:
+
+* Some projects may not have a PM assigned
+
+---
+
+## 5. Filtering Conditions (WHERE Clause)
+
+### 5.1 Exclude Templates
+
+```sql
+p.TEMPLATE_FLAG = 'N'
+```
+
+#### Why:
+
+* Templates are not real projects
+* Keeps only active/real project records
+
+---
+
+### 5.2 Status Filtering
+
+```sql
+p.PROJECT_STATUS_CODE IN ('APPROVED','ACTIVE','DRAFT')
+```
+
+#### Why:
+
+Focuses on **in-progress lifecycle projects**:
+
+* `DRAFT` → Initial stage
+* `APPROVED` → Approved but not fully active
+* `ACTIVE` → Currently running
+
+---
+
+## 6. Sorting Logic
+
+```sql
+ORDER BY p.SEGMENT1
+```
+
+#### Why:
+
+* Orders by project number
+* Makes output consistent and user-friendly
+
+---
+
+## 7. Final Output Behavior
+
+* Each row represents **one project**
+* Includes enriched descriptive data
+* May return **NULL Project Manager** if not assigned
+* May return **multiple rows per project** if multiple PM roles exist
+
+---
+
+## 8. Why This Report is Needed
+
+This report is useful because:
+
+* Oracle Fusion stores data in **normalized, technical structures**
+* End users need **flattened, readable datasets**
+* It reduces the need to join multiple tables repeatedly
+* Provides a **ready-to-use dataset for reporting tools**
+
+---
+
+## 9. Where This Report is Typically Used
+
+* BI Publisher (BIP) reports
+* APEX dashboards
+* Excel extracts for business users
+* PMO tracking sheets
+* Integration with external systems
+
+---
+
+## 10. Possible Enhancements
+
+* Add Project Type / Category
+* Include Financial data (Cost, Budget)
+* Add Project Status Date
+* Restrict to Primary Project Manager
+* Add parameterized filters (BU, Status, Date range)
+
+---
+
+## 11. Summary
+
+This query builds a **complete, business-friendly project dataset** by:
+
+* Starting from core project data
+* Enriching with status, BU, and manager details
+* Filtering only relevant projects
+* Delivering a clean and structured output
+
+It serves as a strong base for any **project-level reporting or analytics use case** in Oracle Fusion PPM.
+
+---
